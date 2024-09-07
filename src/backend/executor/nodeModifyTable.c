@@ -1977,6 +1977,7 @@ ExecUpdatePrepareSlot(ResultRelInfo *resultRelInfo,
  * caller is also in charge of doing EvalPlanQual if the tuple is found to
  * be concurrently updated.  However, in case of a cross-partition update,
  * this routine does it.
+ *
  */
 static TM_Result
 ExecUpdateAct(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
