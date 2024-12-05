@@ -543,6 +543,10 @@ qsort_tuple_int32_compare(SortTuple *a, SortTuple *b, Tuplesortstate *state)
 {
 	int			compare;
 
+    /*
+     * 只比较主键或复合键的第一个键的列值，如果第一列的值不同，直接返回；
+     * 否则还需要比较唯一键的其他列的值是否相同；
+     */
 	compare = ApplyInt32SortComparator(a->datum1, a->isnull1,
 									   b->datum1, b->isnull1,
 									   &state->base.sortKeys[0]);

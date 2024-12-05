@@ -412,16 +412,16 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 	IndexTuple	itup = insertstate->itup;
 	IndexTuple	curitup = NULL;
 	ItemId		curitemid = NULL;
-	BTScanInsert itup_key = insertstate->itup_key;
+	BTScanInsert itup_key = insertstate->itup_key;   /* 正在插入的index元组信息 */
 	SnapshotData SnapshotDirty;
 	OffsetNumber offset;
 	OffsetNumber maxoff;
 	Page		page;
-	BTPageOpaque opaque;
+	BTPageOpaque opaque;    /* BTree的元信息 */
 	Buffer		nbuf = InvalidBuffer;
 	bool		found = false;
 	bool		inposting = false;
-	bool		prevalldead = true;
+	bool		prevalldead = true;     /* 标识页面上的所有元组是否被killed */
 	int			curposti = 0;
 
 	/* Assume unique until we find a duplicate */
@@ -429,18 +429,24 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 
 	InitDirtySnapshot(SnapshotDirty);
 
-	page = BufferGetPage(insertstate->buf);
-	opaque = BTPageGetOpaque(page);
-	maxoff = PageGetMaxOffsetNumber(page);
+	page = BufferGetPage(insertstate->buf);  /* 获取当前正在处理的页面的信息 */
+	opaque = BTPageGetOpaque(page);  /* 获取BTree的元信息 */
+	maxoff = PageGetMaxOffsetNumber(page);  /* page页面的最大偏移量 */
 
 	/*
 	 * Find the first tuple with the same key.
 	 *
 	 * This also saves the binary search bounds in insertstate.  We use them
 	 * in the fastpath below, but also in the _bt_findinsertloc() call later.
+	 *
+	 * insertstate->bounds_valid为TRUE，表示之前的二分搜索已经找到了第一个具有相同键的元组,
+	 * 并将搜索边界信息保存在了insertstate中。这种情况下,可以直接使用这些边界信息,而不需要再次进行二分搜索。
+	 *
+	 * 如果insertstate->bounds_valid为false,表示还没有进行过二分搜索,或者之前的搜索结果已经失效。
+	 * 这种情况下,需要重新执行二分搜索来找到第一个相等的元组,并更新insertstate中的边界信息
 	 */
 	Assert(!insertstate->bounds_valid);
-	offset = _bt_binsrch_insert(rel, insertstate);
+	offset = _bt_binsrch_insert(rel, insertstate);   /* 获取第一个相同元组在page的偏移量 */
 
 	/*
 	 * Scan over all equal tuples, looking for live conflicts.
@@ -462,6 +468,24 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 		 * advances curposti --- an iteration that handles the rightmost/max
 		 * heap TID in a posting list finally advances the page offset (and
 		 * unsets "inposting").
+		 *
+         * 堆元组：实际存储在表中的数据行，每个堆元组都有一个唯一的标识符（heap TID）
+		 * 索引元组：存储在BTree中的键值及其相关的堆元组标识符
+		 *
+		 * "inposting" state is set when _inside_ a posting list --- not when
+		 * we're at the start (or end) of a posting list.  We advance curposti
+		 * at the end of the iteration when inside a posting list tuple.  In
+		 * general, every loop iteration either advances the page offset or
+		 * advances curposti --- an iteration that handles the rightmost/max
+		 * heap TID in a posting list finally advances the page offset (and
+		 * unsets "inposting").
+		 *
+		 * posting list是一种优化技术,用于存储具有相同键值的多个堆元组标识符(heap TID)。
+		 * inposting用于跟踪当前是否正在处理发布列表中的元组，在循环遍历索引元组时,
+		 * 每个迭代都会处理一个堆元组标识符(heap TID)。
+		 * 如果当前元组是发布列表的一部分,则会设置inposting标志为true。
+		 * 在处理发布列表中的元组时,不会推进页面偏移量(offset)。
+		 * 当处理到发布列表中的最后一个元组时,才会推进页面偏移量,并将inposting标志设置为false。
 		 *
 		 * Make sure the offset points to an actual index tuple before trying
 		 * to examine it...
@@ -492,6 +516,7 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 			/*
 			 * We can skip items that are already marked killed.
 			 *
+			 * 过已被标记为 killed 的索引元组的优化：
 			 * In the presence of heavy update activity an index may contain
 			 * many killed items with the same key; running _bt_compare() on
 			 * each killed item gets expensive.  Just advance over killed
@@ -509,12 +534,16 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 
 				if (!inposting)
 				{
-					/* Plain tuple, or first TID in posting list tuple */
+					/* Plain tuple, or first TID in posting list tuple
+					 * 如果比较结果不为 0,表示已经超出了所有相等的元组,可以退出循环。
+					 */
 					if (_bt_compare(rel, itup_key, page, offset) != 0)
 						break;	/* we're past all the equal tuples */
 
 					/* Advanced curitup */
 					curitup = (IndexTuple) PageGetItem(page, curitemid);
+
+                    /* 在 B-Tree 内部节点中,每个 pivot 元组都包含一个键值和指向子节点的指针。 */
 					Assert(!BTreeTupleIsPivot(curitup));
 				}
 
@@ -529,13 +558,15 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 				{
 					/* ... htid is first TID in new posting list */
 					inposting = true;
-					prevalldead = true;
+					prevalldead = true;  /* page只要有一个元组有效就将该变量设置为false */
 					curposti = 0;
 					htid = *BTreeTupleGetPostingN(curitup, 0);
 				}
 				else
 				{
-					/* ... htid is second or subsequent TID in posting list */
+					/* ... htid is second or subsequent TID in posting list
+					 * 它处理发布列表(posting list)元组中的第二个或后续的堆元组标识符(heap TID)。
+					 */
 					Assert(curposti > 0);
 					htid = *BTreeTupleGetPostingN(curitup, curposti);
 				}
@@ -544,6 +575,16 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 				 * If we are doing a recheck, we expect to find the tuple we
 				 * are rechecking.  It's not a duplicate, but we have to keep
 				 * scanning.
+				 *
+				 * htid：当前正在处理的堆元组标识符(heap TID)；
+				 * itup: 要插入的新索引元组；
+				 * t_tid: 要插入的新索引元组关联的堆元组标识符；
+				 *
+				 * itup->t_tid 表示要插入的新索引元组关联的堆元组标识符(heap TID)，
+				 *  当要插入一个新的索引元组时，新索引元组的键值是从要插入的数据行中提取的索引列值，
+				 *  新索引元组的堆元组标识符(t_tid)则是从要插入的数据行在底层表(heap)中的位置信息中获取的。
+				 *
+				 * 如果两个堆元组标识符相同,并不意味着就不是重复项，因为它与要插入的新元组关联的堆元组标识符是相同的。
 				 */
 				if (checkUnique == UNIQUE_CHECK_EXISTING &&
 					ItemPointerCompare(&htid, &itup->t_tid) == 0)
@@ -556,6 +597,17 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 				 * satisfying SnapshotDirty. This is necessary because for AMs
 				 * with optimizations like heap's HOT, we have just a single
 				 * index entry for the entire chain.
+				 *
+				 * 因为在某些索引访问方法(AM)中,比如 PostgreSQL 的堆(heap)存储引擎,
+				 * 可能会出现优化机制,如热备份(HOT)。
+				 * 这种优化可能会导致对于同一个逻辑数据行,索引中只有一个单一的索引元组。
+				 *
+				 * 由于存在这种优化,_bt_check_unique 函数在检查索引元组是否违反唯一性约束时,
+				 * 可能会漏掉一些满足 SnapshotDirty 快照的表元组。
+				 * SnapshotDirty 快照表示当前事务可以看到的所有可见的修改,包括未提交的修改。
+				 *
+				 * 在检查当前索引元组是否违反唯一性约束时,还需要额外检查是否存在任何满足 SnapshotDirty
+				 * 快照的表元组与该索引元组相关联。
 				 */
 				else if (table_index_fetch_tuple_check(heapRel, &htid,
 													   &SnapshotDirty,
@@ -570,6 +622,8 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 					 * that it is a potential conflict and leave the full
 					 * check till later. Don't invalidate binary search
 					 * bounds.
+					 *
+					 * 因为后面的检查还会继续使用bound来优化查找的性能。
 					 */
 					if (checkUnique == UNIQUE_CHECK_PARTIAL)
 					{
@@ -592,7 +646,12 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 							_bt_relbuf(rel, nbuf);
 						/* Tell _bt_doinsert to wait... */
 						*speculativeToken = SnapshotDirty.speculativeToken;
-						/* Caller releases lock on buf immediately */
+						/* Caller releases lock on buf immediately
+						 *
+						 * 标识之前计算的搜索边界失，因为在等待正在更新冲突元组的其他事务完成期间，
+						 * 可能会有其他事务对 B-Tree 索引进行修改,导致页面结构发生变化。
+						 * 这样一来,之前计算的搜索边界信息可能就不再准确了,需要重新计算。
+						 */
 						insertstate->bounds_valid = false;
 						return xwait;
 					}
@@ -603,6 +662,24 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 					 * is itself now committed dead --- if so, don't complain.
 					 * This is a waste of time in normal scenarios but we must
 					 * do it to support CREATE INDEX CONCURRENTLY.
+					 *
+                     * 首先判断要插入的新元组是否已经被标记为dead，因为在并发创建index时插入
+					 * 一个"根"元组(root TID),但实际的表元组可能已经被删除或更新。这种情况下,
+					 * 插入到索引中的"根"元组就被标记为"已提交死亡",因为它已经不再对应任何活动的表元组。
+					 * 正常的事务处理中，如果要插入的新索引元组所对应的表元组已经被删除或更新,并且该更新操作已经提交。
+					 * 那么这个新索引元组就会被标记为"已提交死亡",因为它已经没有对应的活动表元组了。
+					 *
+					 * PostgreSQL 的 B-Tree 索引实现中,每个索引元组都包含两部分:
+					 *  键值(key)
+					 *  关联的堆元组标识符(heap TID)
+					 * 在并发索引构建的过程中,为了支持并发的数据修改操作,PostgreSQL 会先在索引中插入一个"根"元组。
+                     * 这个"根"元组的键值部分是空的(NULL)。
+                     * 但它的堆元组标识符(heap TID)部分会被设置为实际数据表中要被索引的那个元组的位置信息。
+                     * 这样做的目的是:
+                     *  在索引构建过程中,可以允许对底层表进行并发的插入、删除和更新操作。
+                     *  当这些并发修改发生时,PostgreSQL 可以将修改操作记录下来,并在索引构建完成后应用这些变更。
+                     *  通过插入这个"根"元组,可以为这些并发修改提供一个"占位符"。
+                     *  在索引构建完成后,这个"根"元组就会被替换为实际的索引元组。
 					 *
 					 * We must follow HOT-chains here because during
 					 * concurrent index build, we insert the root TID though
@@ -721,7 +798,11 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 		{
 			int			highkeycmp;
 
-			/* If scankey == hikey we gotta check the next page too */
+            /*
+             * If scankey == hikey we gotta check the next page too，
+             * 判断当前是否在最右边的页面，一旦检查到当前页面的最高键已经超过了
+             * 待插入项的键值,那么就可以确定不会有更多的冲突了。
+             */
 			if (P_RIGHTMOST(opaque))
 				break;
 			highkeycmp = _bt_compare(rel, itup_key, page, P_HIKEY);

@@ -2994,6 +2994,16 @@ typedef struct AppendRelInfo
 	 *
 	 * Caution: the Vars have varlevelsup = 0.  Be careful to adjust as needed
 	 * when copying into a subquery.
+	 *
+	 * list中存储的是子表与父表相对应的列信息，例如：
+	 *  create table pt(a int, b text) partition by(a);
+	 *  create table pt_1(b text, a int);
+	 *  alter table pt attach partition pt_1 for values from ...;
+	 *  pt表的a列对应的var->attno = 1,translated_vars中第一个元素是与pt表对应的列，即pt_1表的a列
+	 *  其var—>attno = 2。
+	 * 即translated_vars中的信息是父表定义的column列表（pt表），但元素的成员信息对应的是子表的column列表。
+	 * 主要是生成计划过程中，由于分区表的子表和父表的列顺序可能不同，分别生成每个子表对应的执行计划，那么表达式
+	 * 初始化前需要保证其引用正确的列。
 	 */
 	List	   *translated_vars;	/* Expressions in the child's Vars */
 

@@ -822,6 +822,10 @@ typedef struct BTInsertStateData
 	 */
 	bool		bounds_valid;
 	OffsetNumber low;
+    /*
+     * 表示在当前页面上进行二分搜索时,搜索范围的严格上界。
+     * 所谓"严格"上界,是指 stricthigh 指向的位置上的元组的键值应该大于要插入的新元组的键值。
+     */
 	OffsetNumber stricthigh;
 
 	/*

@@ -5879,6 +5879,9 @@ heap_finish_speculative(Relation relation, ItemPointer tid)
 /*
  *	heap_abort_speculative - kill a speculatively inserted tuple
  *
+ * 该函数会将指定的元组(通过 tid 参数指定)标记为死亡状态。
+ * 这是通过将该元组的 xmin 事务 ID 标记为无效来实现的。
+ *
  * Marks a tuple that was speculatively inserted in the same command as dead,
  * by setting its xmin as invalid.  That makes it immediately appear as dead
  * to all transactions, including our own.  In particular, it makes
@@ -5901,6 +5904,9 @@ heap_finish_speculative(Relation relation, ItemPointer tid)
  *
  * This routine does not affect logical decoding as it only looks at
  * confirmation records.
+ *
+ * 将元组标记为死亡状态后,其他事务就可以立即感知到该元组是无效的,不需要等待当前事务的提交或回滚。
+ * 这有助于提高并发性,避免出现unprincipled deadlocks(不可预料的死锁)。
  */
 void
 heap_abort_speculative(Relation relation, ItemPointer tid)

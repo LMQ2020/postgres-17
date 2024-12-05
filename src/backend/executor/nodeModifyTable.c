@@ -283,6 +283,26 @@ ExecProcessReturning(ResultRelInfo *resultRelInfo,
  * proceed with avoiding insertion (taking speculative insertion's alternative
  * path) on the basis of another tuple that is not visible to MVCC snapshot.
  * Check for the need to raise a serialization failure, and do so as necessary.
+ *
+ * 验证元组是否可见，即在当前事务的 MVCC 快照下是否可见。在高等级别的隔离级别下，
+ * 如果基于另一个在 MVCC 快照下不可见的元组来决定是否执行插入操作（采取了插入操作的替代路径），
+ * 这将与更高隔离级别的保证不一致。因此，函数需要检查是否需要引发序列化失败，并在必要时执行此操作。
+ *
+ * 通过代码的逻辑控制更高的事务隔离级别的数据一致性的处理。
+ *
+ * 例如，现在有两个事务操作如下：
+ * 事务 T1：
+ *  读取账户 A 的余额为 1000。
+ *  根据账户 A 的余额决定是否向账户 B 转账 500。
+ *
+ * 事务 T2：
+ *  在 T1 读取账户 A 之后，将账户 A 的余额减少 500，并将修改提交。
+ *
+ * 如果在 T1 决定是否向账户 B 转账 500 的时候，仅依据当前语句快照中不可见的元组来避免插入操作，那么可能出现以下情况：
+ *  T1 在读取账户 A 时，看到的余额是 1000，认为可以向账户 B 转账 500。
+ *  但在执行转账操作之前，T2 修改了账户 A 的余额为 500，并提交了修改。
+ *  由于 T1 依据的是当前语句快照中不可见的元组，它没有意识到账户 A 的余额已经被修改。
+ *  结果，T1 向账户 B 转账了 500，导致了账户 A 和账户 B 的余额不一致。
  */
 static void
 ExecCheckTupleVisible(EState *estate,
@@ -1093,6 +1113,8 @@ ExecInsert(ModifyTableContext *context,
 			 * insertion lock".  Others can use that to wait for us to decide
 			 * if we're going to go ahead with the insertion, instead of
 			 * waiting for the whole transaction to complete.
+			 *
+			 * insert数据之前获取推测锁。
 			 */
 			specToken = SpeculativeInsertionLockAcquire(GetCurrentTransactionId());
 
@@ -1120,6 +1142,13 @@ ExecInsert(ModifyTableContext *context,
 			 * XID as if this was a regularly inserted tuple all along.  Or if
 			 * we killed the tuple, they will see it's dead, and proceed as if
 			 * the tuple never existed.
+			 *
+			 * 释放speculative insertion lock 后,会唤醒所有正在等待该锁的事务。
+			 * 这些等待事务会重新检查插入的元组,如果元组不再是speculative状态,就会继续处理该元组。
+			 * 如果元组被标记为死亡,则等待事务会直接继续处理,就像该元组从未存在过一样。
+			 *
+			 * 当其他事务尝试访问一个speculative状态的元组时,它们会被要求等待该元组的状态变更。
+			 * 这是通过获取speculative insertion lock来实现的,该锁会阻塞其他事务,直到插入操作完成。
 			 */
 			SpeculativeInsertionLockRelease(GetCurrentTransactionId());
 

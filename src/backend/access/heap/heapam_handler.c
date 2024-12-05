@@ -255,6 +255,15 @@ heapam_tuple_insert(Relation relation, TupleTableSlot *slot, CommandId cid,
 		pfree(tuple);
 }
 
+/*
+ * 将新的元组数据插入到尝试堆表中，
+ * 如果插入操作成功,事务会提交并释放 speculative 锁，
+ * 如果插入操作失败,事务会回滚并释放 speculative 锁，
+ *
+ * 并发控制：
+ *  其他事务在尝试访问同一个表时,如果发现有一个事务持有 speculative 锁,就知道该事务正在尝试进行插入操作。
+ *  这样其他事务就可以选择等待该插入操作完成,或者选择其他的并发策略,而不是一直被阻塞。
+ */
 static void
 heapam_tuple_insert_speculative(Relation relation, TupleTableSlot *slot,
 								CommandId cid, int options,

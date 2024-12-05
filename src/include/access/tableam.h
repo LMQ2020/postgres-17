@@ -1430,6 +1430,10 @@ table_tuple_insert_speculative(Relation rel, TupleTableSlot *slot,
 /*
  * Complete "speculative insertion" started in the same transaction. If
  * succeeded is true, the tuple is fully inserted, if false, it's removed.
+ *
+ * 完成先前在同一事务中开始的speculative insertion操作，
+ * 如果 succeeded 为 true,表示元组已成功插入,则将其状态标记为正常。
+ * 如果 succeeded 为 false,表示元组未能成功插入,则将其状态标记为speculative。
  */
 static inline void
 table_tuple_complete_speculative(Relation rel, TupleTableSlot *slot,
