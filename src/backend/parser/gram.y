@@ -3922,7 +3922,7 @@ ColConstraintElem:
 					n->contype = CONSTR_UNIQUE;
 					n->location = @1;
 					n->nulls_not_distinct = !$2;
-					n->eys = NULL;
+					n->keys = NULL;
 					n->options = $3;
 					n->indexname = NULL;
 					n->indexspace = $4;

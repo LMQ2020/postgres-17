@@ -1200,6 +1200,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 		/*
 		 * Add the Var to the output.  If this join potentially nulls this
 		 * input, we have to update the Var's varnullingrels, which means
+		 *
 		 * making a copy.  But note that we don't ever add nullingrel bits to
 		 * row identity Vars (cf. comments in setrefs.c).
 		 */

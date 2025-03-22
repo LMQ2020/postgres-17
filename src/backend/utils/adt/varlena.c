@@ -3492,7 +3492,7 @@ SplitIdentifierString(char *rawstring, char separator,
 			 * XXX because we want to overwrite the input in-place, we cannot
 			 * support a downcasing transformation that increases the string
 			 * length.  This is not a problem given the current implementation
-			 * of downcase_truncate_identifier, but we'll probably have to do
+			 * of downcase_truncate_identifier, but we' ll probably have to do
 			 * something about this someday.
 			 */
 			len = endp - curname;

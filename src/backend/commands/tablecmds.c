@@ -14885,6 +14885,7 @@ ATExecSetRelOptions(Relation rel, List *defList, AlterTableType operation,
 		 * If we're supposed to replace the reloptions list, we just pretend
 		 * there were none before.
 		 */
+
 		datum = (Datum) 0;
 		isnull = true;
 	}

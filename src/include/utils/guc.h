@@ -215,7 +215,18 @@ typedef enum
 #define GUC_EXPLAIN			   0x000020 /* include in EXPLAIN */
 #define GUC_REPORT			   0x000040 /* auto-report changes to client */
 #define GUC_NOT_IN_SAMPLE	   0x000080 /* not in postgresql.conf.sample */
-#define GUC_DISALLOW_IN_FILE   0x000100 /* can't set in postgresql.conf */
+#define GUC_DISALLOW_IN_FILE   0x000100 /* can't set in postgresql.conf
+                                         * 设置该标记的GUC在postgresql.conf文件中
+                                         * 设置该GUC参数，如果该GUC的level是PGC_INTERNAL，
+                                         * 启动服务报错，其中报错的原因是因为PGC_INTERNAL的
+                                         * GUC不能显式设置，如果是PGC_USERSET level的GUC
+                                         * 启动服务正常，但设置的该GUC的值不生效，因为代码通过
+                                         * SetConfigOption("transaction_read_only", "no",
+                                         *                  PGC_POSTMASTER, PGC_S_OVERRIDE);
+                                         * 设置该GUC的初始值，防止conf文件中可能修改该GUC的值，
+                                         * conf文件中设置的GUC source为PGC_S_FILE，相比PGC_S_OVERRIDE
+                                         * 优先级低，所以不会将PGC_S_OVERRIDE的GUC值修改。
+                                         */
 #define GUC_CUSTOM_PLACEHOLDER 0x000200 /* placeholder for custom variable */
 #define GUC_SUPERUSER_ONLY	   0x000400 /* show only to superusers */
 #define GUC_IS_NAME			   0x000800 /* limit string to NAMEDATALEN-1 */
